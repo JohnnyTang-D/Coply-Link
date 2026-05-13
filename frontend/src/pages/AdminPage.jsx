@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { HeroSection } from '../components/HeroSection';
 import { MetricPill } from '../components/MetricPill';
 import { StatusCard } from '../components/StatusCard';
 import { LoadingCards } from '../components/LoadingCards';
 import { Toast } from '../components/Toast';
 import { API, requestJson, buildEditForm } from '../utils/api';
+import { exportLinks, parseImportFile } from '../utils/helpers';
 
 export function AdminPage() {
   const [links, setLinks] = useState([]);
@@ -17,6 +18,7 @@ export function AdminPage() {
   const [feedback, setFeedback] = useState({ message: '', tone: 'success' });
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const showFeedback = (tone, message) => {
     setFeedback({ tone, message });
@@ -164,6 +166,61 @@ export function AdminPage() {
     showFeedback('success', '已载入编辑内容。');
   };
 
+  const handleExport = () => {
+    const result = exportLinks(links);
+    if (result.success) {
+      showFeedback('success', `已导出 ${result.count} 条链接`);
+    } else {
+      showFeedback('danger', result.error);
+    }
+  };
+
+  const handleImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const parseResult = await parseImportFile(file);
+    if (!parseResult.success) {
+      showFeedback('danger', parseResult.error);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const link of parseResult.links) {
+      try {
+        await requestJson(`${API}/links`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: link.title,
+            url: link.url,
+            description: link.description || '',
+            password,
+          }),
+        });
+        successCount++;
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (successCount > 0) {
+      showFeedback('success', `成功导入 ${successCount} 条链接${failCount > 0 ? `，${failCount} 条失败` : ''}`);
+      await loadLinks();
+    } else {
+      showFeedback('danger', '导入失败，请检查文件内容');
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const totalClicks = useMemo(
     () => links.reduce((sum, link) => sum + (link.clicks ?? 0), 0),
     [links],
@@ -269,6 +326,29 @@ export function AdminPage() {
               )}
             </div>
           </form>
+
+          <div className="glass-panel utility-panel">
+            <div className="section-heading">
+              <h2>批量操作</h2>
+              <p>导出当前所有链接或导入外部链接文件。</p>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="secondary-button" onClick={handleExport}>
+                导出 JSON
+              </button>
+              <label className="secondary-button import-label">
+                导入 JSON
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImport}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
+          </div>
         </div>
 
         <section className="glass-panel list-panel">

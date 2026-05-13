@@ -207,30 +207,24 @@
 }
 
 .metric-row {
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
   margin-top: 8px;
 }
 
 .metric-pill {
-  flex: 1;
-  padding: 12px 14px;
-  border-radius: 22px;
+  padding: 8px 12px;
+  border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.26);
   background: rgba(255, 255, 255, 0.11);
-}
-
-.metric-pill span {
-  display: block;
-  margin-bottom: 6px;
+  font-size: 0.85rem;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  text-align: left;
 }
 
 .metric-pill strong {
-  display: block;
   color: var(--text-primary);
-  font-size: 1.05rem;
 }
 
 .metric-pill--danger strong {
@@ -294,9 +288,14 @@
 
 .card-badge,
 .card-clicks,
+.card-time,
 .url-hint {
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.card-time {
+  opacity: 0.7;
 }
 
 .card-badge {
@@ -388,6 +387,12 @@
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.16);
   border: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.secondary-button.is-done {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .danger-button {
@@ -492,6 +497,10 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.import-label {
+  cursor: pointer;
 }
 
 .form-actions {

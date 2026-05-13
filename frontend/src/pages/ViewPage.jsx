@@ -6,14 +6,18 @@ import { LoadingCards } from '../components/LoadingCards';
 import { LinkCard } from '../components/LinkCard';
 import { Toast } from '../components/Toast';
 import { API, shuffleArray, copyToClipboard, requestJson, getFingerprint } from '../utils/api';
+import { getCopiedIds, addCopiedId } from '../utils/storage';
 
 export function ViewPage() {
   const [links, setLinks] = useState([]);
+  const [myLinks, setMyLinks] = useState([]);
+  const [copiedIds, setCopiedIds] = useState(getCopiedIds());
   const [copiedId, setCopiedId] = useState(null);
   const [copiedTitle, setCopiedTitle] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [showSubmitForm, setShowSubmitForm] = useState(false);
+  const [editingLink, setEditingLink] = useState(null);
   const [submitForm, setSubmitForm] = useState({ title: '', url: '', description: '' });
   const [submissionInfo, setSubmissionInfo] = useState({
     count: 0,
@@ -29,6 +33,13 @@ export function ViewPage() {
     [links],
   );
 
+  // 按已复制状态排序：未复制的在前，已复制的沉底
+  const sortedLinks = useMemo(() => {
+    const uncopied = links.filter((link) => !copiedIds.includes(link.id));
+    const copied = links.filter((link) => copiedIds.includes(link.id));
+    return [...shuffleArray(uncopied), ...copied];
+  }, [links, copiedIds]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -37,7 +48,7 @@ export function ViewPage() {
       try {
         const linksData = await requestJson(`${API}/links`);
         if (!cancelled) {
-          setLinks(shuffleArray(linksData));
+          setLinks(linksData);
           setError('');
         }
       } catch {
@@ -55,6 +66,16 @@ export function ViewPage() {
         const fp = await getFingerprint();
         if (!cancelled) {
           setFingerprint(fp);
+        }
+
+        // 加载用户自己提交的链接
+        const myLinksData = await requestJson(`${API}/links/my-links`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint: fp }),
+        });
+        if (!cancelled) {
+          setMyLinks(myLinksData);
         }
 
         const submissionData = await requestJson(`${API}/links/submission-count`, {
@@ -86,7 +107,16 @@ export function ViewPage() {
     setError('');
     try {
       const data = await requestJson(`${API}/links`);
-      setLinks(shuffleArray(data));
+      setLinks(data);
+
+      if (fingerprint) {
+        const myLinksData = await requestJson(`${API}/links/my-links`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint }),
+        });
+        setMyLinks(myLinksData);
+      }
     } catch {
       setError('链接列表加载失败，请检查服务是否已启动。');
     } finally {
@@ -107,6 +137,11 @@ export function ViewPage() {
         item.id === link.id ? { ...item, clicks: item.clicks + 1 } : item,
       ),
     );
+
+    // 记录到 localStorage
+    addCopiedId(link.id);
+    setCopiedIds(getCopiedIds());
+
     setCopiedId(link.id);
     setCopiedTitle(link.title);
 
@@ -114,6 +149,30 @@ export function ViewPage() {
       setCopiedId(null);
       setCopiedTitle('');
     }, 900);
+  };
+
+  const handleEditMyLink = (link) => {
+    setEditingLink(link);
+    setSubmitForm({ title: link.title, url: link.url, description: link.description || '' });
+    setShowSubmitForm(true);
+  };
+
+  const handleDeleteMyLink = async (linkId) => {
+    if (!window.confirm('确定删除这条链接吗？')) {
+      return;
+    }
+
+    try {
+      await requestJson(`${API}/links/public/${linkId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fingerprint }),
+      });
+      setSubmitFeedback({ tone: 'success', message: '链接已删除' });
+      await loadLinks();
+    } catch {
+      setSubmitFeedback({ tone: 'danger', message: '删除失败' });
+    }
   };
 
   const handleSubmitPublic = async (event) => {
@@ -127,34 +186,55 @@ export function ViewPage() {
     setIsSubmitting(true);
 
     try {
-      const data = await requestJson(`${API}/links/public`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fingerprint, ...submitForm }),
-      });
-
-      if (data.success) {
-        setSubmitFeedback({ tone: 'success', message: `链接已添加！今日剩余提交次数：${data.remaining}` });
-        setSubmitForm({ title: '', url: '', description: '' });
-        setShowSubmitForm(false);
-        setSubmissionInfo((prev) => ({
-          ...prev,
-          count: prev.count + 1,
-          remaining: data.remaining,
-        }));
-        await loadLinks();
+      if (editingLink) {
+        // 修改自己的链接
+        await requestJson(`${API}/links/public/${editingLink.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint, ...submitForm }),
+        });
+        setSubmitFeedback({ tone: 'success', message: '链接已更新' });
       } else {
-        setSubmitFeedback({ tone: 'danger', message: data.error || '提交失败' });
+        // 新提交
+        const data = await requestJson(`${API}/links/public`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint, ...submitForm }),
+        });
+
+        if (data.success) {
+          setSubmitFeedback({ tone: 'success', message: `链接已添加！今日剩余提交次数：${data.remaining}` });
+          setSubmissionInfo((prev) => ({
+            ...prev,
+            count: prev.count + 1,
+            remaining: data.remaining,
+          }));
+        } else {
+          setSubmitFeedback({ tone: 'danger', message: data.error || '提交失败' });
+        }
       }
+
+      setSubmitForm({ title: '', url: '', description: '' });
+      setShowSubmitForm(false);
+      setEditingLink(null);
+      await loadLinks();
     } catch (err) {
-      let errorMsg = '提交失败，请稍后重试';
+      let errorMsg = '操作失败，请稍后重试';
       if (err.message?.includes('429')) {
         errorMsg = '今日提交次数已达上限，请联系管理员提交';
+      } else if (err.message?.includes('403')) {
+        errorMsg = '只能修改自己提交的链接';
       }
       setSubmitFeedback({ tone: 'danger', message: errorMsg });
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const cancelEdit = () => {
+    setEditingLink(null);
+    setSubmitForm({ title: '', url: '', description: '' });
+    setShowSubmitForm(false);
   };
 
   return (
@@ -175,11 +255,42 @@ export function ViewPage() {
       {copiedTitle && <div className="copy-toast">已复制「{copiedTitle}」</div>}
       <Toast message={submitFeedback.message} tone={submitFeedback.tone} onClose={() => setSubmitFeedback({ message: '', tone: 'success' })} />
 
+      {/* 用户自己提交的链接 */}
+      {!error && !isLoading && myLinks.length > 0 && (
+        <section className="glass-panel my-links-panel">
+          <div className="section-heading">
+            <h2>我的提交</h2>
+            <p>共 {myLinks.length} 条，可编辑或删除</p>
+          </div>
+          <div className="links-list">
+            {myLinks.map((link) => (
+              <article key={link.id} className="list-item">
+                <div className="list-item__copy">
+                  <strong>{link.title}</strong>
+                  <span>{link.url}</span>
+                </div>
+                <div className="list-item__meta">
+                  <em>复制 {link.clicks}</em>
+                  <div className="list-actions">
+                    <button type="button" className="secondary-button" onClick={() => handleEditMyLink(link)}>
+                      编辑
+                    </button>
+                    <button type="button" className="danger-button" onClick={() => handleDeleteMyLink(link.id)}>
+                      删除
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {!error && !isLoading && submissionInfo.remaining > 0 && (
         <section className="glass-panel editor-panel">
           <div className="section-heading">
-            <h2>自助提交</h2>
-            <p>今日剩余 {submissionInfo.remaining} 次；描述可选</p>
+            <h2>{editingLink ? '编辑链接' : '自助提交'}</h2>
+            <p>{editingLink ? '修改自己提交的链接' : `今日剩余 ${submissionInfo.remaining} 次；描述可选`}</p>
           </div>
           {showSubmitForm ? (
             <form className="submit-form" onSubmit={handleSubmitPublic}>
@@ -205,9 +316,9 @@ export function ViewPage() {
               </div>
               <div className="form-actions">
                 <button type="submit" className="primary-button" disabled={isSubmitting}>
-                  {isSubmitting ? '提交中...' : '提交链接'}
+                  {isSubmitting ? '保存中...' : editingLink ? '更新链接' : '提交链接'}
                 </button>
-                <button type="button" className="secondary-button" onClick={() => setShowSubmitForm(false)}>
+                <button type="button" className="secondary-button" onClick={cancelEdit}>
                   取消
                 </button>
               </div>
@@ -238,10 +349,16 @@ export function ViewPage() {
         />
       ) : isLoading ? (
         <LoadingCards />
-      ) : links.length > 0 ? (
+      ) : sortedLinks.length > 0 ? (
         <div className="links-grid">
-          {links.map((link) => (
-            <LinkCard key={link.id} link={link} copied={copiedId === link.id} onCopy={handleCopy} />
+          {sortedLinks.map((link) => (
+            <LinkCard
+              key={link.id}
+              link={link}
+              copied={copiedId === link.id}
+              isCopied={copiedIds.includes(link.id)}
+              onCopy={handleCopy}
+            />
           ))}
         </div>
       ) : (
