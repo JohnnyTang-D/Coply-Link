@@ -1,0 +1,21 @@
+{
+  "name": "coply-link",
+  "version": "1.0.0",
+  "description": "互助链接系统",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
+    "start": "npm run start --workspace=backend",
+    "build": "npm run build --workspace=frontend"
+  },
+  "devDependencies": {
+    "adm-zip": "^0.5.17",
+    "concurrently": "^9.2.1",
+    "node-ssh": "^13.2.1",
+    "ssh2": "^1.17.0"
+  }
+}

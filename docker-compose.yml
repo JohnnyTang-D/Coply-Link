@@ -1,0 +1,21 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3818:3818"
+    environment:
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - PORT=3818
+    volumes:
+      - ./data:/app/data
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8086:80"
+    depends_on:
+      - backend
