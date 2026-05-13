@@ -5,7 +5,7 @@ import { StatusCard } from '../components/StatusCard';
 import { LoadingCards } from '../components/LoadingCards';
 import { LinkCard } from '../components/LinkCard';
 import { Toast } from '../components/Toast';
-import { API, shuffleArray, copyToClipboard, requestJson, getFingerprint } from '../utils/api';
+import { API, shuffleArray, copyToClipboard, requestJson, getFingerprint, jumpToApp } from '../utils/api';
 
 export function ViewPage() {
   const [links, setLinks] = useState([]);
@@ -109,6 +109,9 @@ export function ViewPage() {
     );
     setCopiedId(link.id);
     setCopiedTitle(link.title);
+
+    // 跳转到对应的APP
+    jumpToApp(link.url);
 
     window.setTimeout(() => {
       setCopiedId(null);
