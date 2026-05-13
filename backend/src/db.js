@@ -120,7 +120,7 @@ export function initTables() {
   // 表创建后再编译语句
   statements = {
     links: {
-      findAll: db.prepare('SELECT * FROM links ORDER BY created_at DESC'),
+      findAll: db.prepare('SELECT * FROM links ORDER BY RANDOM()'),
       findById: db.prepare('SELECT * FROM links WHERE id = ?'),
       insert: db.prepare('INSERT INTO links (title, url, description) VALUES (?, ?, ?)'),
       update: db.prepare('UPDATE links SET title = ?, url = ?, description = ? WHERE id = ?'),
