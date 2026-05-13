@@ -1,4 +1,4 @@
-export function LinkCard({ link, copied, onCopy }) {
+export function LinkCard({ link, copied, onCopy, isMine }) {
   return (
     <article className="link-card glass-panel">
       <div className="card-topline">
@@ -14,13 +14,17 @@ export function LinkCard({ link, copied, onCopy }) {
 
       <div className="card-footer">
         <span className="url-hint">支持网址、文件路径、局域网地址</span>
-        <button
-          type="button"
-          className={`primary-button ${copied ? 'is-copied' : ''}`}
-          onClick={() => onCopy(link)}
-        >
-          {copied ? '已复制' : '复制链接'}
-        </button>
+        {!isMine ? (
+          <button
+            type="button"
+            className={`primary-button ${copied ? 'is-copied' : ''}`}
+            onClick={() => onCopy(link)}
+          >
+            {copied ? '已复制' : '复制链接'}
+          </button>
+        ) : (
+          <span className="owner-badge">您的链接</span>
+        )}
       </div>
     </article>
   );
