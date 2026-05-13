@@ -9,7 +9,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - PORT=3818
     volumes:
-      - ./data:/app/data
+      - ./data:/data
 
   frontend:
     build:

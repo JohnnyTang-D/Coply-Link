@@ -1,41 +1,44 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { HeroSection } from '../components/HeroSection';
 import { MetricPill } from '../components/MetricPill';
 import { StatusCard } from '../components/StatusCard';
 import { LoadingCards } from '../components/LoadingCards';
 import { LinkCard } from '../components/LinkCard';
 import { Toast } from '../components/Toast';
-import { API, shuffleArray, copyToClipboard, requestJson, getFingerprint, jumpToApp } from '../utils/api';
+import { API, shuffleArray, copyToClipboard, requestJson, getFingerprint } from '../utils/api';
+import { getCopiedIds, addCopiedId } from '../utils/storage';
 
 export function ViewPage() {
   const [links, setLinks] = useState([]);
+  const [myLinks, setMyLinks] = useState([]);
+  const [copiedIds, setCopiedIds] = useState(getCopiedIds());
   const [copiedId, setCopiedId] = useState(null);
   const [copiedTitle, setCopiedTitle] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [showSubmitForm, setShowSubmitForm] = useState(false);
+  const [editingLink, setEditingLink] = useState(null);
   const [submitForm, setSubmitForm] = useState({ title: '', url: '', description: '' });
-
+  const [submissionInfo, setSubmissionInfo] = useState({
+    count: 0,
+    limit: 3,
+    remaining: 3,
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitFeedback, setSubmitFeedback] = useState({ message: '', tone: 'success' });
-  const [copiedUsers, setCopiedUsers] = useState([]);
-  const navigate = useNavigate();
-
-  const checkAuth = () => {
-    const isAuthed = localStorage.getItem('isAuthed') === 'true';
-    if (!isAuthed) {
-      navigate('/login');
-      return false;
-    }
-    return true;
-  };
-
+  const [fingerprint, setFingerprint] = useState(null);
 
   const totalClicks = useMemo(
     () => links.reduce((sum, link) => sum + (link.clicks ?? 0), 0),
     [links],
   );
+
+  // 按已复制状态排序：未复制的在前，已复制的沉底
+  const sortedLinks = useMemo(() => {
+    const uncopied = links.filter((link) => !copiedIds.includes(link.id));
+    const copied = links.filter((link) => copiedIds.includes(link.id));
+    return [...shuffleArray(uncopied), ...copied];
+  }, [links, copiedIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +48,7 @@ export function ViewPage() {
       try {
         const linksData = await requestJson(`${API}/links`);
         if (!cancelled) {
-          setLinks(shuffleArray(linksData));
+          setLinks(linksData);
           setError('');
         }
       } catch {
@@ -57,6 +60,39 @@ export function ViewPage() {
           setIsLoading(false);
         }
       }
+
+      // 再加载指纹和提交次数
+      try {
+        const fp = await getFingerprint();
+        if (!cancelled) {
+          setFingerprint(fp);
+        }
+
+        // 加载用户自己提交的链接
+        const myLinksData = await requestJson(`${API}/links/my-links`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint: fp }),
+        });
+        if (!cancelled) {
+          setMyLinks(myLinksData);
+        }
+
+        const submissionData = await requestJson(`${API}/links/submission-count`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint: fp }),
+        });
+
+        if (!cancelled) {
+          setSubmissionInfo(submissionData);
+        }
+      } catch {
+        // 提交次数加载失败不影响链接显示
+        if (!cancelled) {
+          setSubmissionInfo({ count: 0, limit: 3, remaining: 3 });
+        }
+      }
     };
 
     void loadInitialData();
@@ -66,28 +102,21 @@ export function ViewPage() {
     };
   }, []);
 
-  // 检查并加载已复制的用户列表（每天0点失效）
-  useEffect(() => {
-    const today = new Date().toLocaleDateString();
-    const storedDate = localStorage.getItem('copyDate');
-    const storedUsers = JSON.parse(localStorage.getItem('copiedUserIds') || '[]');
-
-    if (storedDate && storedDate !== today) {
-      localStorage.removeItem('copiedUserIds');
-      localStorage.removeItem('copyDate');
-      setCopiedUsers([]);
-    } else {
-      setCopiedUsers(storedUsers);
-    }
-  }, []);
-
-
   const loadLinks = async () => {
     setIsLoading(true);
     setError('');
     try {
       const data = await requestJson(`${API}/links`);
-      setLinks(shuffleArray(data));
+      setLinks(data);
+
+      if (fingerprint) {
+        const myLinksData = await requestJson(`${API}/links/my-links`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint }),
+        });
+        setMyLinks(myLinksData);
+      }
     } catch {
       setError('链接列表加载失败，请检查服务是否已启动。');
     } finally {
@@ -96,7 +125,6 @@ export function ViewPage() {
   };
 
   const handleCopy = async (link) => {
-    if (!checkAuth()) return;
     const success = await copyToClipboard(link.url);
     if (!success) {
       prompt('自动复制失败，请手动复制：', link.url);
@@ -109,22 +137,13 @@ export function ViewPage() {
         item.id === link.id ? { ...item, clicks: item.clicks + 1 } : item,
       ),
     );
+
+    // 记录到 localStorage
+    addCopiedId(link.id);
+    setCopiedIds(getCopiedIds());
+
     setCopiedId(link.id);
     setCopiedTitle(link.title);
-
-    // 记录该用户的ID到本地已复制列表
-    if (link.user_id) {
-      setCopiedUsers(prev => {
-        if (prev.includes(link.user_id)) return prev;
-        const next = [...prev, link.user_id];
-        localStorage.setItem('copiedUserIds', JSON.stringify(next));
-        localStorage.setItem('copyDate', new Date().toLocaleDateString());
-        return next;
-      });
-    }
-
-    // 跳转到对应的APP
-    jumpToApp(link.url);
 
     window.setTimeout(() => {
       setCopiedId(null);
@@ -132,35 +151,90 @@ export function ViewPage() {
     }, 900);
   };
 
+  const handleEditMyLink = (link) => {
+    setEditingLink(link);
+    setSubmitForm({ title: link.title, url: link.url, description: link.description || '' });
+    setShowSubmitForm(true);
+  };
+
+  const handleDeleteMyLink = async (linkId) => {
+    if (!window.confirm('确定删除这条链接吗？')) {
+      return;
+    }
+
+    try {
+      await requestJson(`${API}/links/public/${linkId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fingerprint }),
+      });
+      setSubmitFeedback({ tone: 'success', message: '链接已删除' });
+      await loadLinks();
+    } catch {
+      setSubmitFeedback({ tone: 'danger', message: '删除失败' });
+    }
+  };
+
   const handleSubmitPublic = async (event) => {
     event.preventDefault();
-    if (!checkAuth()) return;
+
+    if (!fingerprint) {
+      setSubmitFeedback({ tone: 'danger', message: '指纹获取失败，请刷新页面重试' });
+      return;
+    }
 
     setIsSubmitting(true);
 
-
     try {
-      const username = localStorage.getItem('username');
-      const data = await requestJson(`${API}/links/public`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, ...submitForm }),
-      });
-
-      if (data.success) {
-        setSubmitFeedback({ tone: 'success', message: `链接已添加！` });
-        setSubmitForm({ title: '', url: '', description: '' });
-        setShowSubmitForm(false);
-        await loadLinks();
+      if (editingLink) {
+        // 修改自己的链接
+        await requestJson(`${API}/links/public/${editingLink.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint, ...submitForm }),
+        });
+        setSubmitFeedback({ tone: 'success', message: '链接已更新' });
       } else {
-        setSubmitFeedback({ tone: 'danger', message: data.error || '提交失败' });
+        // 新提交
+        const data = await requestJson(`${API}/links/public`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint, ...submitForm }),
+        });
+
+        if (data.success) {
+          setSubmitFeedback({ tone: 'success', message: `链接已添加！今日剩余提交次数：${data.remaining}` });
+          setSubmissionInfo((prev) => ({
+            ...prev,
+            count: prev.count + 1,
+            remaining: data.remaining,
+          }));
+        } else {
+          setSubmitFeedback({ tone: 'danger', message: data.error || '提交失败' });
+        }
       }
+
+      setSubmitForm({ title: '', url: '', description: '' });
+      setShowSubmitForm(false);
+      setEditingLink(null);
+      await loadLinks();
     } catch (err) {
-      let errorMsg = '提交失败，请稍后重试';
+      let errorMsg = '操作失败，请稍后重试';
+      if (err.message?.includes('429')) {
+        errorMsg = '今日提交次数已达上限，请联系管理员提交';
+      } else if (err.message?.includes('403')) {
+        errorMsg = '只能修改自己提交的链接';
+      }
       setSubmitFeedback({ tone: 'danger', message: errorMsg });
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const cancelEdit = () => {
+    setEditingLink(null);
+    setSubmitForm({ title: '', url: '', description: '' });
+    setShowSubmitForm(false);
   };
 
   return (
@@ -169,6 +243,7 @@ export function ViewPage() {
         <div className="metric-row">
           <MetricPill label="当前链接" value={isLoading ? '...' : links.length} />
           <MetricPill label="累计复制" value={isLoading ? '...' : totalClicks} />
+          <MetricPill label="今日次数" value={`${submissionInfo.count}/${submissionInfo.limit}`} />
           <MetricPill
             label="状态"
             value={error ? '异常' : isLoading ? '加载中' : '已就绪'}
@@ -180,48 +255,89 @@ export function ViewPage() {
       {copiedTitle && <div className="copy-toast">已复制「{copiedTitle}」</div>}
       <Toast message={submitFeedback.message} tone={submitFeedback.tone} onClose={() => setSubmitFeedback({ message: '', tone: 'success' })} />
 
-      <section className="glass-panel editor-panel">
-        <div className="section-heading">
-          <h2>自助提交</h2>
-          <p>描述可选；支持网址、文件路径和局域网地址。</p>
-        </div>
-        {showSubmitForm ? (
-          <form className="submit-form" onSubmit={handleSubmitPublic}>
-            <div className="form-grid">
-              <input
-                placeholder="标题"
-                value={submitForm.title}
-                onChange={(e) => setSubmitForm({ ...submitForm, title: e.target.value })}
-                required
-              />
-              <input
-                placeholder="地址"
-                value={submitForm.url}
-                onChange={(e) => setSubmitForm({ ...submitForm, url: e.target.value })}
-                required
-              />
-              <textarea
-                className="full-span"
-                placeholder="描述（可选）"
-                value={submitForm.description}
-                onChange={(e) => setSubmitForm({ ...submitForm, description: e.target.value })}
-              />
-            </div>
-            <div className="form-actions">
-              <button type="submit" className="primary-button" disabled={isSubmitting}>
-                {isSubmitting ? '提交中...' : '提交链接'}
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setShowSubmitForm(false)}>
-                取消
-              </button>
-            </div>
-          </form>
-        ) : (
-          <button type="button" className="primary-button" onClick={() => { if (checkAuth()) setShowSubmitForm(true); }}>
-            添加链接
-          </button>
-        )}
-      </section>
+      {/* 用户自己提交的链接 */}
+      {!error && !isLoading && myLinks.length > 0 && (
+        <section className="glass-panel my-links-panel">
+          <div className="section-heading">
+            <h2>我的提交</h2>
+            <p>共 {myLinks.length} 条，可编辑或删除</p>
+          </div>
+          <div className="links-list">
+            {myLinks.map((link) => (
+              <article key={link.id} className="list-item">
+                <div className="list-item__copy">
+                  <strong>{link.title}</strong>
+                  <span>{link.url}</span>
+                </div>
+                <div className="list-item__meta">
+                  <em>复制 {link.clicks}</em>
+                  <div className="list-actions">
+                    <button type="button" className="secondary-button" onClick={() => handleEditMyLink(link)}>
+                      编辑
+                    </button>
+                    <button type="button" className="danger-button" onClick={() => handleDeleteMyLink(link.id)}>
+                      删除
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!error && !isLoading && submissionInfo.remaining > 0 && (
+        <section className="glass-panel editor-panel">
+          <div className="section-heading">
+            <h2>{editingLink ? '编辑链接' : '自助提交'}</h2>
+            <p>{editingLink ? '修改自己提交的链接' : `今日剩余 ${submissionInfo.remaining} 次；描述可选`}</p>
+          </div>
+          {showSubmitForm ? (
+            <form className="submit-form" onSubmit={handleSubmitPublic}>
+              <div className="form-grid">
+                <input
+                  placeholder="标题"
+                  value={submitForm.title}
+                  onChange={(e) => setSubmitForm({ ...submitForm, title: e.target.value })}
+                  required
+                />
+                <input
+                  placeholder="地址"
+                  value={submitForm.url}
+                  onChange={(e) => setSubmitForm({ ...submitForm, url: e.target.value })}
+                  required
+                />
+                <textarea
+                  className="full-span"
+                  placeholder="描述（可选）"
+                  value={submitForm.description}
+                  onChange={(e) => setSubmitForm({ ...submitForm, description: e.target.value })}
+                />
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="primary-button" disabled={isSubmitting}>
+                  {isSubmitting ? '保存中...' : editingLink ? '更新链接' : '提交链接'}
+                </button>
+                <button type="button" className="secondary-button" onClick={cancelEdit}>
+                  取消
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button type="button" className="primary-button" onClick={() => setShowSubmitForm(true)}>
+              添加链接
+            </button>
+          )}
+        </section>
+      )}
+
+      {!error && !isLoading && submissionInfo.remaining === 0 && (
+        <StatusCard
+          title="今日提交次数已用完"
+          description="同一设备+网络组合每日限制3次，请联系管理员在 /admin 页面添加"
+          tone="muted"
+        />
+      )}
 
       {error ? (
         <StatusCard
@@ -233,20 +349,17 @@ export function ViewPage() {
         />
       ) : isLoading ? (
         <LoadingCards />
-      ) : links.length > 0 ? (
+      ) : sortedLinks.length > 0 ? (
         <div className="links-grid">
-          {links.map((link) => {
-            const currentUserId = parseInt(localStorage.getItem('userId'));
-            return (
-              <LinkCard
-                key={link.id}
-                link={link}
-                copied={copiedId === link.id || copiedUsers.includes(link.user_id)}
-                isMine={link.user_id === currentUserId}
-                onCopy={handleCopy}
-              />
-            );
-          })}
+          {sortedLinks.map((link) => (
+            <LinkCard
+              key={link.id}
+              link={link}
+              copied={copiedId === link.id}
+              isCopied={copiedIds.includes(link.id)}
+              onCopy={handleCopy}
+            />
+          ))}
         </div>
       ) : (
         <StatusCard
